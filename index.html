@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Fuel">
+<meta name="theme-color" content="#0d1117">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
+<title>Fuel</title>
+<style>
+:root{--bg:#f3f5f8;--card:#fff;--tx:#14181f;--mu:#667085;--bd:#e4e7ec;--ac:#2563eb;--kc:#f97316;--p:#2563eb;--c:#f59e0b;--f:#e11d48;--fb:#16a34a;--w:#0891b2}
+:root[data-theme=dark]{--bg:#0d1117;--card:#161b22;--tx:#f0f3f6;--mu:#8b949e;--bd:#262d36}
+*{box-sizing:border-box;margin:0}
+body{font:16px/1.4 -apple-system,system-ui,"Helvetica Neue",sans-serif;background:var(--bg);color:var(--tx);padding:env(safe-area-inset-top) 0 calc(76px + env(safe-area-inset-bottom))}
+main{max-width:640px;margin:auto;padding:16px}
+.card{background:var(--card);border-radius:22px;padding:16px;margin-bottom:12px}
+.c{display:flex;align-items:center;gap:14px}
+.g2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.row{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:7px 0}
+.mu{color:var(--mu);font-size:13px}
+label{display:block;margin-top:8px}
+input,select{font:inherit;font-size:16px;padding:12px;border-radius:12px;border:1px solid var(--bd);background:var(--bg);color:var(--tx);width:100%;margin-top:4px}
+.b{font:inherit;font-weight:600;padding:12px;border:0;border-radius:12px;background:var(--ac);color:#fff;width:100%;margin-top:8px}
+.alt{background:var(--bg);color:var(--tx);border:1px solid var(--bd)}
+.ic{background:none;border:0;color:var(--mu);font-size:18px;padding:6px;width:auto}
+.bar{height:8px;border-radius:4px;background:var(--bd);overflow:hidden;margin-bottom:10px}
+.bar i{display:block;height:100%;border-radius:4px;transition:width .5s}
+.th{width:40px;height:40px;border-radius:10px;object-fit:cover;background:var(--bg);display:grid;place-items:center;flex:none}
+.chart{display:flex;align-items:flex-end;gap:2px;height:120px;margin-top:12px}
+.chart div{flex:1;background:var(--kc);border-radius:3px 3px 0 0;min-height:2px;transition:height .4s}
+#rd{border-radius:14px;overflow:hidden;margin-top:10px}
+#sy{position:fixed;top:calc(env(safe-area-inset-top) + 6px);right:12px;font-size:12px;color:var(--mu);z-index:5}
+nav{position:fixed;bottom:0;left:0;right:0;display:flex;background:var(--card);border-top:1px solid var(--bd);padding-bottom:env(safe-area-inset-bottom)}
+nav button{flex:1;padding:10px 0;background:none;border:0;color:var(--mu);font-size:11px}
+nav button.on{color:var(--ac);font-weight:600}
+@media(prefers-reduced-motion:reduce){*{transition:none!important}}
+</style></head>
+<body><div id="sy"></div><main></main>
+<nav><button data-t="today">🏠<br>Today</button><button data-t="add">🍎<br>Food</button><button data-t="move">🏃<br>Exercise</button><button data-t="hist">📊<br>History</button><button data-t="me">⚙️<br>Settings</button></nav>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<script>
+const SB_URL='https://dplcboonxjlxajkmymbu.supabase.co',SB_KEY='sb_publishable_YUvD7NAYoSlJ4IfLCDSZeg_9eRi5uSd';
+const OFF='https://world.openfoodfacts.org',FLD='code,product_name,brands,nutriments,serving_size,image_small_url';
+const MEALS=['Breakfast','Lunch','Dinner','Snacks'],K=['kcal','p','c','f','fb','sg','na'];
+const MET={Walking:3.5,Running:9.8,Cycling:7.5,Swimming:6,'Weight training':5,Sports:7,Other:4};
+const $=s=>document.querySelector(s),uid=()=>crypto.randomUUID(),ymd=d=>d.toLocaleDateString('en-CA');
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const sb=supabase.createClient(SB_URL,SB_KEY);
+let user,rows=[],tab='today',day=ymd(new Date()),cur,man,q='',res=[],lst=[],msg='',addMeal='Snacks',rng=7,stId,sc,busy,bad='';
+let st={cal:2000,p:100,c:250,f:70,fb:30,water:2000,step:250,weight:70,height:170,age:30,theme:'auto'};
+
+/* ---------- local store (IndexedDB) ---------- */
+const idb=new Promise((ok,no)=>{const r=indexedDB.open('fuel',1);r.onupgradeneeded=()=>r.result.createObjectStore('e',{keyPath:'id'});r.onsuccess=()=>ok(r.result);r.onerror=no});
+const tx=async(m,f)=>{const d=await idb;return new Promise((ok,no)=>{const t=d.transaction('e',m),req=f(t.objectStore('e'));t.oncomplete=()=>ok(req&&req.result);t.onerror=no})};
+const all=()=>tx('readonly',s=>s.getAll()),put=r=>tx('readwrite',s=>s.put(r));
+const live=k=>rows.filter(r=>r.kind==k&&!r.deleted),D=(k,d=day)=>live(k).filter(r=>r.day==d);
+const sum=(a,k)=>a.reduce((s,r)=>s+(+r.data[k]||0),0);
+const tot=(p,g)=>Object.fromEntries(K.map(k=>[k,+((p[k]||0)*g/100).toFixed(1)]));
+const per=d=>Object.fromEntries(K.map(k=>[k,(d[k]||0)*100/(d.g||100)]));
+
+async function save(kind,data,d=day,id=uid(),gone=false){
+  await put({id,user_id:user.id,kind,day:d,data,deleted:gone,updated_at:new Date().toISOString(),dirty:1});
+  rows=(await all()).filter(r=>r.user_id==user.id);render();sync()}
+function del(id){const r=rows.find(x=>x.id==id);save(r.kind,r.data,r.day,r.id,true)}
+function rep(id){const r=rows.find(x=>x.id==id);save(r.kind,r.data,ymd(new Date()))}
+
+/* ---------- cloud sync (Supabase) ---------- */
+function setSync(){const n=rows.filter(r=>r.dirty).length;$('#sy').textContent=!navigator.onLine?'Offline, '+n+' waiting':bad?'Sync error, will retry':n?'Syncing '+n+'…':'Synced'}
+async function sync(){
+  if(!user||busy||!navigator.onLine)return setSync();
+  busy=1;bad='';setSync();let ch=0;
+  try{
+    const d=rows.filter(r=>r.dirty);
+    if(d.length){const {error}=await sb.from('entries').upsert(d.map(({dirty,...r})=>r));if(error)throw error;for(const r of d)await put({...r,dirty:0})}
+    const key='pull_'+user.id,{data,error}=await sb.from('entries').select('*').gt('updated_at',localStorage.getItem(key)||'1970-01-01T00:00:00Z').order('updated_at');
+    if(error)throw error;
+    const loc=Object.fromEntries(rows.map(r=>[r.id,r]));
+    for(const r of data){const l=loc[r.id];if(!l||(!l.dirty&&new Date(l.updated_at)<new Date(r.updated_at))){await put({...r,dirty:0});ch=1}}
+    if(data.length)localStorage.setItem(key,data[data.length-1].updated_at);
+    rows=(await all()).filter(r=>r.user_id==user.id);
+    if(ch&&!cur&&!man){loadSt();render()}
+  }catch(e){bad='error'}
+  busy=0;setSync();
+  if(!bad&&rows.some(r=>r.dirty))sync()}
+addEventListener('online',sync);addEventListener('offline',setSync);
+document.addEventListener('visibilitychange',()=>!document.hidden&&sync());setInterval(sync,30000);
+
+/* ---------- auth ---------- */
+function authView(){$('main').innerHTML=`<div class=card><h2>Fuel</h2><div class=mu>Sign in to keep your log synced across devices.</div><label class=mu>Email<input id=em type=email autocapitalize=off></label><label class=mu>Password<input id=pw type=password></label><div class=g2><button class=b onclick=login(0)>Sign in</button><button class="b alt" onclick=login(1)>Create account</button></div></div>`}
+async function login(up){const a={email:$('#em').value,password:$('#pw').value};
+  const {data,error}=await(up?sb.auth.signUp(a):sb.auth.signInWithPassword(a));
+  if(error)return alert(error.message);if(!data.session)return alert('Check your email to confirm, then sign in.');boot()}
+async function boot(){
+  const {data}=await sb.auth.getSession();user=data.session&&data.session.user;if(!user)return authView();
+  rows=(await all()).filter(r=>r.user_id==user.id);loadSt();render();sync()}
+function loadSt(){const s=live('settings').sort((a,b)=>new Date(b.updated_at)-new Date(a.updated_at))[0];stId=s?s.id:stId||uid();if(s)st={...st,...s.data}}
+function setS(k,v){st[k]=k=='theme'?v:+v;save('settings',st,'2000-01-01',stId)}
+const theme=()=>document.documentElement.dataset.theme=st.theme=='auto'?(matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light'):st.theme;
+
+/* ---------- food data ---------- */
+const map=p=>{const n=p.nutriments||{};return{code:p.code||'',name:p.product_name||'Unnamed product',brand:p.brands||'',img:p.image_small_url||'',g:parseFloat(p.serving_size)||100,
+  per100:{kcal:n['energy-kcal_100g']||0,p:n.proteins_100g||0,c:n.carbohydrates_100g||0,f:n.fat_100g||0,fb:n.fiber_100g||0,sg:n.sugars_100g||0,na:(n.sodium_100g||0)*1000}}};
+async function search(){
+  if(!q.trim()){res=[];return render()}
+  msg='Searching…';render();
+  const mine=live('food_item').map(r=>r.data).filter(i=>(i.name+i.brand).toLowerCase().includes(q.toLowerCase()));
+  try{const j=await(await fetch(`${OFF}/cgi/search.pl?search_terms=${encodeURIComponent(q)}&search_simple=1&action=process&json=1&page_size=20&fields=${FLD}`)).json();
+    res=[...mine,...(j.products||[]).filter(p=>p.product_name).map(map)];msg=res.length?'':'No matches. Add it as a custom food.'}
+  catch(e){res=mine;msg='Online search needs a connection.'}
+  render()}
+async function lookup(code){
+  const l=live('food_item').find(r=>r.data.code==code);if(l)return pick(l.data);
+  msg='Looking up '+code+'…';render();
+  try{const j=await(await fetch(`${OFF}/api/v2/product/${code}.json?fields=${FLD}`)).json();if(j.status==1)return pick(map(j.product))}catch(e){}
+  man={code};msg='Barcode '+code+' was not found. Enter it once and it is saved for future scans.';render()}
+async function scan(){
+  try{const F=Html5QrcodeSupportedFormats;sc=new Html5Qrcode('rd',{formatsToSupport:[F.EAN_13,F.EAN_8,F.UPC_A,F.UPC_E],verbose:false});
+    $('#cx').style.display='block';
+    await sc.start({facingMode:'environment'},{fps:10,qrbox:{width:260,height:140}},async c=>{await endScan();lookup(c)},()=>{})}
+  catch(e){await endScan();msg='Camera is not available. Allow camera access for Safari in Settings, or add the food manually.';render()}}
+async function endScan(){try{await sc.stop();sc.clear()}catch(e){}sc=null;const x=$('#cx');if(x)x.style.display='none'}
+function pick(i){cur={i,meal:addMeal,day,g:i.g};tab='add';render()}
+function edit(id){const r=rows.find(x=>x.id==id),d=r.data;cur={i:{name:d.name,brand:d.brand,g:d.g,per100:per(d)},id,g:d.g,meal:d.meal,day:r.day};tab='add';render()}
+function go(m){addMeal=m;tab='add';res=[];q='';msg='';cur=man=null;render()}
+function pv(){const g=+$('#gm').value||0,t=tot(cur.i.per100,g);$('#pvx').textContent=`${Math.round(t.kcal)} kcal, protein ${Math.round(t.p)} g, carbs ${Math.round(t.c)} g, fat ${Math.round(t.f)} g, fiber ${Math.round(t.fb)} g`}
+function commit(){const g=+$('#gm').value||0,{i,id}=cur;
+  if(i.code&&!live('food_item').some(r=>r.data.code==i.code))save('food_item',{...i,per100:i.per100},'2000-01-01');
+  save('food',{name:i.name,brand:i.brand,meal:$('#ml').value,g,...tot(i.per100,g)},cur.day,id||undefined);cur=null}
+const FL=[['name','Name'],['g','Serving size (g)'],['kcal','Calories'],['p','Protein (g)'],['c','Carbs (g)'],['f','Fat (g)'],['fb','Fiber (g)'],['sg','Sugar (g)'],['na','Sodium (mg)']];
+function mk(){const v=k=>$('#m_'+k).value,g=+v('g')||100,n=k=>+((+v(k)||0)*100/g).toFixed(2);
+  const i={code:man.code||'',name:v('name')||'Custom food',brand:'',img:'',g,per100:Object.fromEntries(K.map(k=>[k,n(k)]))};
+  save('food_item',i,'2000-01-01');man=null;pick(i)}
+
+/* ---------- views ---------- */
+const ring=(v,g)=>{const p=Math.min(v/g,1),c=2*Math.PI*52;return `<svg width=130 height=130 viewBox="0 0 120 120"><circle cx=60 cy=60 r=52 fill=none stroke="var(--bd)" stroke-width=10 /><circle cx=60 cy=60 r=52 fill=none stroke="var(--kc)" stroke-width=10 stroke-linecap=round stroke-dasharray="${c*p} ${c}" transform="rotate(-90 60 60)" style="transition:stroke-dasharray .6s"/><text x=60 y=58 text-anchor=middle fill="var(--tx)" font-size=24 font-weight=700>${Math.round(v)}</text><text x=60 y=76 text-anchor=middle fill="var(--mu)" font-size=11>of ${g} kcal</text></svg>`};
+const bar=(l,v,g,col,u='g')=>`<div class=row><span>${l}</span><span class=mu>${Math.round(v)} of ${g} ${u}</span></div><div class=bar><i style="width:${Math.min(100,v/g*100)}%;background:${col}"></i></div>`;
+function today(){
+  const F=D('food'),X=D('workout'),W=D('water'),eat=sum(F,'kcal'),burn=sum(X,'kcal'),wm=sum(W,'ml');
+  return `<div class=card><div class=g2><input type=date value="${day}" onchange="day=this.value||day;render()"><button class="b alt" style="margin:4px 0 0" onclick="day=ymd(new Date());render()">Today</button></div></div>
+<div class="card c">${ring(eat,st.cal)}<div style="flex:1"><div class=row><span>Food</span><b>${Math.round(eat)}</b></div><div class=row><span>Exercise</span><b>−${Math.round(burn)}</b></div><div class=row><span>Net</span><b>${Math.round(eat-burn)}</b></div></div></div>
+<div class=card>${bar('Protein',sum(F,'p'),st.p,'var(--p)')}${bar('Carbs',sum(F,'c'),st.c,'var(--c)')}${bar('Fat',sum(F,'f'),st.f,'var(--f)')}${bar('Fiber',sum(F,'fb'),st.fb,'var(--fb)')}<div class="row mu"><span>Sugar ${Math.round(sum(F,'sg'))} g</span><span>Sodium ${Math.round(sum(F,'na'))} mg</span></div></div>
+<div class=card>${bar('Water',wm,st.water,'var(--w)','ml')}<div class=g2><button class=b onclick="save('water',{ml:st.step})">+${st.step} ml</button><button class="b alt" onclick=undoW()>Undo last</button></div></div>
+${MEALS.map(M=>{const L=F.filter(r=>r.data.meal==M);return `<div class=card><div class=row><b>${M}</b><span class=mu>${Math.round(sum(L,'kcal'))} kcal</span></div>${L.map(r=>`<div class=row><div onclick="edit('${r.id}')" style="flex:1">${esc(r.data.name)}<div class=mu>${r.data.g} g, ${Math.round(r.data.kcal)} kcal</div></div><span><button class=ic title="Copy to today" onclick="rep('${r.id}')">⧉</button><button class=ic onclick="del('${r.id}')">✕</button></span></div>`).join('')}<button class="b alt" onclick="go('${M}')">Add food</button></div>`}).join('')}
+<div class=card><b>Exercise</b>${X.map(r=>`<div class=row><span>${esc(r.data.type)}, ${r.data.min} min</span><span class=mu>${Math.round(r.data.kcal)} kcal</span></div>`).join('')||'<div class=mu>No workouts logged.</div>'}</div>`}
+function undoW(){const w=D('water').sort((a,b)=>new Date(b.updated_at)-new Date(a.updated_at))[0];if(w)del(w.id)}
+function detail(){const {i,id,meal}=cur;
+  return `<div class=card><b>${esc(i.name)}</b><div class=mu>${esc(i.brand)}</div><div class=g2><label class=mu>Amount (g)<input id=gm type=number inputmode=decimal value="${cur.g}" oninput=pv()></label><label class=mu>Meal<select id=ml>${MEALS.map(m=>`<option ${m==meal?'selected':''}>${m}</option>`).join('')}</select></label></div><div id=pvx class=mu style="margin-top:8px"></div><button class=b onclick=commit()>${id?'Save changes':'Add to diary'}</button><button class="b alt" onclick="cur=null;render()">Cancel</button></div>`}
+function mf(){return `<div class=card><b>Custom food</b><div class=mu>${msg}</div>${FL.map(([k,l])=>`<label class=mu>${l}<input id=m_${k} ${k=='name'?'':'type=number inputmode=decimal'}></label>`).join('')}<button class=b onclick=mk()>Save and continue</button><button class="b alt" onclick="man=null;msg='';render()">Cancel</button></div>`}
+function add(){
+  if(man)return mf();if(cur)return detail();
+  lst=res.length?res:live('food_item').map(r=>r.data);
+  return `<div class=card><div class=g2><input id=qi placeholder="Search foods or brands" value="${esc(q)}" onchange="q=this.value;search()"><button class=b style="margin:4px 0 0" onclick="q=$('#qi').value;search()">Search</button></div><div class=g2><button class="b alt" onclick=scan()>Scan barcode</button><button class="b alt" onclick="man={};msg='';render()">Custom food</button></div><button id=cx class="b alt" style="display:none" onclick=endScan()>Cancel scan</button><div id=rd></div><div class=mu style="margin-top:8px">${msg}</div></div>
+<div class=card><div class=mu>${res.length?'Results':'Saved foods'}</div>${lst.map((i,n)=>`<div class=row onclick="pick(lst[${n}])"><div class=c>${i.img?`<img class=th src="${esc(i.img)}" alt="">`:'<div class=th>🍽</div>'}<div>${esc(i.name)}<div class=mu>${esc(i.brand)} ${Math.round(i.per100.kcal*i.g/100)} kcal per ${i.g} g</div></div></div></div>`).join('')||'<div class=mu>Search or scan to add your first food.</div>'}</div>`}
+function move(){const X=D('workout');
+  return `<div class=card><b>Log exercise</b><label class=mu>Type<select id=xt>${Object.keys(MET).map(k=>`<option>${k}</option>`).join('')}</select></label><div class=g2><label class=mu>Minutes<input id=xm type=number inputmode=decimal></label><label class=mu>Distance (km)<input id=xd type=number inputmode=decimal></label></div><label class=mu>Calories burned (leave blank to estimate from your weight)<input id=xk type=number inputmode=decimal></label><button class=b onclick=logX()>Save workout</button><div class=mu style="margin-top:8px">Screenshot analysis is not connected yet.</div></div>
+<div class=card><b>${day}</b>${X.map(r=>`<div class=row><span>${esc(r.data.type)}, ${r.data.min} min${r.data.km?', '+r.data.km+' km':''}<div class=mu>${Math.round(r.data.kcal)} kcal ${r.data.est?'estimated':'entered'}</div></span><button class=ic onclick="del('${r.id}')">✕</button></div>`).join('')||'<div class=mu>Nothing logged for this day.</div>'}</div>`}
+function logX(){const t=$('#xt').value,m=+$('#xm').value||0,k=$('#xk').value,est=k==='';
+  save('workout',{type:t,min:m,km:+$('#xd').value||0,kcal:est?Math.round(MET[t]*st.weight*m/60):+k,est})}
+function hist(){
+  const ds=[...Array(rng)].map((_,i)=>{const d=new Date();d.setDate(d.getDate()-rng+1+i);return ymd(d)}),inR=r=>ds.includes(r.day);
+  const f=live('food').filter(inR),e=ds.map(d=>sum(f.filter(r=>r.day==d),'kcal')),mx=Math.max(...e,st.cal),n=e.filter(x=>x).length||1,a=k=>Math.round(sum(f,k)/n);
+  const w=Math.round(sum(live('water').filter(inR),'ml')/rng),x=Math.round(sum(live('workout').filter(inR),'kcal')/rng);
+  return `<div class=card><div class=g2><button class="b ${rng==7?'':'alt'}" onclick="rng=7;render()">7 days</button><button class="b ${rng==30?'':'alt'}" onclick="rng=30;render()">30 days</button></div><div class=chart>${ds.map((d,i)=>`<div onclick="day='${d}';tab='today';render()" style="height:${e[i]/mx*100}%"></div>`).join('')}</div><div class=mu style="margin-top:8px">Calories eaten per day. Tap a bar to open that day.</div></div>
+<div class=card><b>Daily averages</b>${[['Calories on logged days',a('kcal'),'kcal'],['Protein',a('p'),'g'],['Carbs',a('c'),'g'],['Fat',a('f'),'g'],['Fiber',a('fb'),'g'],['Sugar',a('sg'),'g'],['Sodium',a('na'),'mg'],['Exercise',x,'kcal'],['Water',w,'ml']].map(([l,v,u])=>`<div class=row><span>${l}</span><b>${v} ${u}</b></div>`).join('')}</div>`}
+function me(){
+  const F=[['cal','Calorie target (kcal)'],['p','Protein target (g)'],['c','Carbs target (g)'],['f','Fat target (g)'],['fb','Fiber target (g)'],['water','Water goal (ml)'],['step','Water button size (ml)'],['weight','Weight (kg)'],['height','Height (cm)'],['age','Age']];
+  return `<div class=card><label class=mu>Theme<select onchange="setS('theme',this.value)">${['auto','light','dark'].map(t=>`<option ${st.theme==t?'selected':''}>${t}</option>`).join('')}</select></label>${F.map(([k,l])=>`<label class=mu>${l}<input type=number inputmode=decimal value="${st[k]}" onchange="setS('${k}',this.value)"></label>`).join('')}<div class=mu style="margin-top:8px">Targets are yours to set. Nothing is prescribed.</div></div><div class=card><div class=mu>${esc(user.email)}</div><button class="b alt" onclick="sb.auth.signOut().then(()=>location.reload())">Sign out</button></div>`}
+function render(){theme();$('main').innerHTML=({today,add,move,hist,me}[tab])();
+  document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('on',b.dataset.t==tab));if(cur)pv();setSync()}
+$('nav').onclick=async e=>{const b=e.target.closest('button');if(!b||!user)return;await endScan();tab=b.dataset.t;cur=man=null;render()};
+if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js');
+boot();
+</script></body></html>
